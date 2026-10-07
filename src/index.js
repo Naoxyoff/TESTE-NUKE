@@ -41,6 +41,8 @@ const commands = [
     .addIntegerOption(o => o.setName("roles").setDescription("1-25").setMinValue(1).setMaxValue(25).setRequired(true))
     .addStringOption(o => o.setName("safety").setDescription("Safety phrase").setRequired(true)),
   new SlashCommandBuilder().setName("cleanup").setDescription("Delete only tracked test resources."),
+  new SlashCommandBuilder().setName("destruction").setDescription("Controlled destruction test: delete only tracked test resources.")
+    .addStringOption(o => o.setName("safety").setDescription("Safety phrase").setRequired(true)),
   new SlashCommandBuilder().setName("status").setDescription("Show test state.")
 ].map(x => x.toJSON());
 
@@ -155,6 +157,55 @@ client.on("interactionCreate", async i => {
       await deleteCreated(x);
       console.log(`[TEST] stopped=${state.stopped} remaining channels=${state.channels.size} roles=${state.roles.size}`);
       return;
+    }
+
+    if (i.commandName === "destruction") {
+      const safety = i.options.getString("safety");
+
+      if (safety !== cfg.phrase) {
+        return i.reply({ content: "⛔ Phrase de sécurité incorrecte.", ephemeral: true });
+      }
+
+      if (state.channels.size === 0 && state.roles.size === 0) {
+        return i.reply({ content: "ℹ️ Aucun salon ou rôle de test suivi. Utilise /setup-test d'abord.", ephemeral: true });
+      }
+
+      await i.deferReply({ ephemeral: true });
+      const trackedChannels = [...state.channels].map(id => i.guild.channels.cache.get(id)).filter(Boolean);
+      const trackedRoles = [...state.roles].map(id => i.guild.roles.cache.get(id)).filter(Boolean);
+      state.stopped = false;
+      let deletedChannels = 0;
+      let deletedRoles = 0;
+
+      for (const channel of trackedChannels) {
+        if (state.stopped) break;
+        try {
+          await channel.delete("Orbis controlled destruction test");
+          state.channels.delete(channel.id);
+          deletedChannels++;
+        } catch (e) {
+          console.log("[DESTRUCTION CHANNEL DELETE]", e.code || e.message);
+          if (e.code === 50013 || e.code === 10003) state.stopped = true;
+        }
+      }
+
+      for (const role of trackedRoles) {
+        if (state.stopped) break;
+        try {
+          await role.delete("Orbis controlled destruction test");
+          state.roles.delete(role.id);
+          deletedRoles++;
+        } catch (e) {
+          console.log("[DESTRUCTION ROLE DELETE]", e.code || e.message);
+          if (e.code === 50013 || e.code === 10011) state.stopped = true;
+        }
+      }
+
+      return i.editReply(
+        "💥 Destruction contrôlée terminée : " +
+        deletedChannels + " salon(s) et " + deletedRoles + " rôle(s) supprimé(s)." +
+        (state.stopped ? " Le test a été stoppé par une perte de permissions/ressource." : "")
+      );
     }
 
     if (i.commandName === "cleanup") {
